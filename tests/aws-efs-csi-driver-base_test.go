@@ -1,25 +1,30 @@
 package tests_test
 
 import (
-	"sigs.k8s.io/kustomize/k8sdeps/kunstruct"
-	"sigs.k8s.io/kustomize/k8sdeps/transformer"
-	"sigs.k8s.io/kustomize/pkg/fs"
-	"sigs.k8s.io/kustomize/pkg/loader"
-	"sigs.k8s.io/kustomize/pkg/resmap"
-	"sigs.k8s.io/kustomize/pkg/resource"
-	"sigs.k8s.io/kustomize/pkg/target"
+	"sigs.k8s.io/kustomize/v3/k8sdeps/kunstruct"
+	"sigs.k8s.io/kustomize/v3/k8sdeps/transformer"
+	"sigs.k8s.io/kustomize/v3/pkg/fs"
+	"sigs.k8s.io/kustomize/v3/pkg/loader"
+	"sigs.k8s.io/kustomize/v3/pkg/plugins"
+	"sigs.k8s.io/kustomize/v3/pkg/resmap"
+	"sigs.k8s.io/kustomize/v3/pkg/resource"
+	"sigs.k8s.io/kustomize/v3/pkg/target"
+	"sigs.k8s.io/kustomize/v3/pkg/validators"
 	"testing"
 )
 
 func writeAwsEfsCsiDriverBase(th *KustTestHarness) {
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-controller-stateful-set.yaml", `
 kind: StatefulSet
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 metadata:
   name: efs-csi-controller
 spec:
   serviceName: efs-csi-controller
   replicas: 1
+  selector:
+    matchLabels:
+      app: efs-csi-controller
   template:
     metadata:
       labels:
@@ -74,8 +79,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["volumeattachments"]
-    verbs: ["get", "list", "watch", "update"]
-`)
+    verbs: ["get", "list", "watch", "update"]`)
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-attacher-cluster-role-binding.yaml", `
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -88,14 +92,12 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: efs-csi-external-attacher-clusterrole
-  apiGroup: rbac.authorization.k8s.io
-`)
+  apiGroup: rbac.authorization.k8s.io`)
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-controller-sa.yaml", `
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: efs-csi-controller-sa
-`)
+  name: efs-csi-controller-sa`)
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-node-cluster-role.yaml", `
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
@@ -119,8 +121,7 @@ rules:
     verbs: ["get", "list", "watch", "update"]
   - apiGroups: ["csi.storage.k8s.io"]
     resources: ["csinodeinfos"]
-    verbs: ["get", "list", "watch", "update"]
-`)
+    verbs: ["get", "list", "watch", "update"]`)
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-node-cluster-role-binding.yaml", `
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -133,11 +134,10 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: efs-csi-node-clusterrole
-  apiGroup: rbac.authorization.k8s.io
-`)
+  apiGroup: rbac.authorization.k8s.io`)
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-node-daemon-set.yaml", `
 kind: DaemonSet
-apiVersion: apps/v1beta2
+apiVersion: apps/v1
 metadata:
   name: efs-csi-node
 spec:
@@ -218,15 +218,13 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: efs-csi-node-sa
-`)
+  name: efs-csi-node-sa`)
 	th.writeF("/manifests/aws/aws-efs-csi-driver/base/csi-default-storage.yaml", `
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: efs-default
-provisioner: efs.csi.aws.com
-`)
+provisioner: efs.csi.aws.com`)
 	th.writeK("/manifests/aws/aws-efs-csi-driver/base", `
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -263,18 +261,20 @@ func TestAwsEfsCsiDriverBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Err: %v", err)
 	}
-	expected, err := m.EncodeAsYaml()
+	expected, err := m.AsYaml()
 	if err != nil {
 		t.Fatalf("Err: %v", err)
 	}
 	targetPath := "../aws/aws-efs-csi-driver/base"
 	fsys := fs.MakeRealFS()
-	_loader, loaderErr := loader.NewLoader(targetPath, fsys)
+	lrc := loader.RestrictionRootOnly
+	_loader, loaderErr := loader.NewLoader(lrc, validators.MakeFakeValidator(), targetPath, fsys)
 	if loaderErr != nil {
 		t.Fatalf("could not load kustomize loader: %v", loaderErr)
 	}
-	rf := resmap.NewFactory(resource.NewFactory(kunstruct.NewKunstructuredFactoryImpl()))
-	kt, err := target.NewKustTarget(_loader, rf, transformer.NewFactoryImpl())
+	rf := resmap.NewFactory(resource.NewFactory(kunstruct.NewKunstructuredFactoryImpl()), transformer.NewFactoryImpl())
+	pc := plugins.DefaultPluginConfig()
+	kt, err := target.NewKustTarget(_loader, rf, transformer.NewFactoryImpl(), plugins.NewLoader(pc, rf))
 	if err != nil {
 		th.t.Fatalf("Unexpected construction error %v", err)
 	}

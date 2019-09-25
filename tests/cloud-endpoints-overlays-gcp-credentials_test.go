@@ -1,20 +1,22 @@
 package tests_test
 
 import (
-	"sigs.k8s.io/kustomize/k8sdeps/kunstruct"
-	"sigs.k8s.io/kustomize/k8sdeps/transformer"
-	"sigs.k8s.io/kustomize/pkg/fs"
-	"sigs.k8s.io/kustomize/pkg/loader"
-	"sigs.k8s.io/kustomize/pkg/resmap"
-	"sigs.k8s.io/kustomize/pkg/resource"
-	"sigs.k8s.io/kustomize/pkg/target"
+	"sigs.k8s.io/kustomize/v3/k8sdeps/kunstruct"
+	"sigs.k8s.io/kustomize/v3/k8sdeps/transformer"
+	"sigs.k8s.io/kustomize/v3/pkg/fs"
+	"sigs.k8s.io/kustomize/v3/pkg/loader"
+	"sigs.k8s.io/kustomize/v3/pkg/plugins"
+	"sigs.k8s.io/kustomize/v3/pkg/resmap"
+	"sigs.k8s.io/kustomize/v3/pkg/resource"
+	"sigs.k8s.io/kustomize/v3/pkg/target"
+	"sigs.k8s.io/kustomize/v3/pkg/validators"
 	"testing"
 )
 
 func writeCloudEndpointsOverlaysGcpCredentials(th *KustTestHarness) {
 	th.writeF("/manifests/gcp/cloud-endpoints/overlays/gcp-credentials/gcp-credentials-patch.yaml", `
 # Patch the env/volumes/volumeMounts for GCP credentials
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cloud-endpoints-controller
@@ -41,8 +43,7 @@ kind: Kustomization
 bases:
 - ../../base
 patchesStrategicMerge:
-- gcp-credentials-patch.yaml
-`)
+- gcp-credentials-patch.yaml`)
 	th.writeF("/manifests/gcp/cloud-endpoints/base/cluster-role-binding.yaml", `
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
@@ -72,6 +73,7 @@ rules:
   - list
 - apiGroups:
   - extensions
+  - networking.k8s.io
   resources:
   - ingresses
   verbs:
@@ -118,7 +120,7 @@ spec:
   version: v1
 `)
 	th.writeF("/manifests/gcp/cloud-endpoints/base/deployment.yaml", `
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cloud-endpoints-controller
@@ -227,18 +229,20 @@ func TestCloudEndpointsOverlaysGcpCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Err: %v", err)
 	}
-	expected, err := m.EncodeAsYaml()
+	expected, err := m.AsYaml()
 	if err != nil {
 		t.Fatalf("Err: %v", err)
 	}
 	targetPath := "../gcp/cloud-endpoints/overlays/gcp-credentials"
 	fsys := fs.MakeRealFS()
-	_loader, loaderErr := loader.NewLoader(targetPath, fsys)
+	lrc := loader.RestrictionRootOnly
+	_loader, loaderErr := loader.NewLoader(lrc, validators.MakeFakeValidator(), targetPath, fsys)
 	if loaderErr != nil {
 		t.Fatalf("could not load kustomize loader: %v", loaderErr)
 	}
-	rf := resmap.NewFactory(resource.NewFactory(kunstruct.NewKunstructuredFactoryImpl()))
-	kt, err := target.NewKustTarget(_loader, rf, transformer.NewFactoryImpl())
+	rf := resmap.NewFactory(resource.NewFactory(kunstruct.NewKunstructuredFactoryImpl()), transformer.NewFactoryImpl())
+	pc := plugins.DefaultPluginConfig()
+	kt, err := target.NewKustTarget(_loader, rf, transformer.NewFactoryImpl(), plugins.NewLoader(pc, rf))
 	if err != nil {
 		th.t.Fatalf("Unexpected construction error %v", err)
 	}
